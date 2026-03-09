@@ -25657,6 +25657,8 @@ module.exports = {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.fetchAniListData = fetchAniListData;
 const ANILIST_API = "https://graphql.anilist.co";
+const MAX_RETRIES = 3;
+const INITIAL_BACKOFF_MS = 1000;
 // ---------------------------------------------------------------------------
 // GraphQL queries
 // ---------------------------------------------------------------------------
@@ -25740,30 +25742,55 @@ query ($username: String) {
     }
   }
 }`;
-/** Sends a GraphQL request to the AniList API and returns the data payload. */
-async function gql(query, variables) {
-    const res = await fetch(ANILIST_API, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ query, variables }),
-    });
-    if (!res.ok) {
-        throw new Error(`AniList API returned ${res.status}: ${res.statusText}`);
-    }
-    const json = (await res.json());
-    if (json.errors?.length) {
-        throw new Error(`AniList GraphQL error: ${json.errors[0].message}`);
-    }
-    return json.data;
+// ---------------------------------------------------------------------------
+// API helpers
+// ---------------------------------------------------------------------------
+/** Waits for the given number of milliseconds. */
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 /**
- * Transforms a raw MediaListCollection response into a flat array of MediaEntry objects.
+ * Sends a GraphQL request to the AniList API with retry on rate limit (429)
+ * and server errors (5xx). Uses exponential backoff between attempts.
+ */
+async function gql(query, variables) {
+    let lastError = null;
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        if (attempt > 0) {
+            const backoff = INITIAL_BACKOFF_MS * Math.pow(2, attempt - 1);
+            await sleep(backoff);
+        }
+        const res = await fetch(ANILIST_API, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+            },
+            body: JSON.stringify({ query, variables }),
+        });
+        // Retry on rate limit or server errors
+        if (res.status === 429 || res.status >= 500) {
+            lastError = new Error(`AniList API returned ${res.status}: ${res.statusText}`);
+            continue;
+        }
+        if (!res.ok) {
+            throw new Error(`AniList API returned ${res.status}: ${res.statusText}`);
+        }
+        const json = (await res.json());
+        if (json.errors?.length) {
+            throw new Error(`AniList GraphQL error: ${json.errors[0].message}`);
+        }
+        return json.data;
+    }
+    throw lastError ?? new Error("AniList API request failed after retries");
+}
+/**
+ * Transforms a raw MediaListCollection into a flat array of MediaEntry objects.
  * AniList nests entries inside "lists" (one per custom list), so we flatten them here.
  */
 function parseEntries(collection, type) {
-    const lists = collection?.lists ?? [];
     const entries = [];
-    for (const list of lists) {
+    for (const list of collection.lists ?? []) {
         for (const entry of list.entries ?? []) {
             entries.push({
                 title: entry.media.title.romaji,
@@ -25802,15 +25829,14 @@ async function fetchAniListData(username, maxItems) {
         ...parseEntries(completedData.manga, "MANGA"),
     ].slice(0, maxItems);
     // Convert minutes watched to days for a more readable stat
-    const userStats = statsData.User;
+    const { anime, manga } = statsData.User.statistics;
     const stats = {
-        animeDaysWatched: Math.round((userStats.statistics.anime.minutesWatched / 60 / 24) * 10) /
-            10,
-        animeCount: userStats.statistics.anime.count,
-        animeMeanScore: userStats.statistics.anime.meanScore,
-        mangaChaptersRead: userStats.statistics.manga.chaptersRead,
-        mangaCount: userStats.statistics.manga.count,
-        mangaMeanScore: userStats.statistics.manga.meanScore,
+        animeDaysWatched: Math.round(((anime.minutesWatched ?? 0) / 60 / 24) * 10) / 10,
+        animeCount: anime.count,
+        animeMeanScore: anime.meanScore,
+        mangaChaptersRead: manga.chaptersRead ?? 0,
+        mangaCount: manga.count,
+        mangaMeanScore: manga.meanScore,
     };
     return { current, recentlyCompleted, stats };
 }
@@ -25870,13 +25896,22 @@ const render_1 = __nccwpck_require__(7055);
 const inject_1 = __nccwpck_require__(3070);
 const fs = __importStar(__nccwpck_require__(9896));
 const path = __importStar(__nccwpck_require__(6928));
+const VALID_STYLES = ["compact", "full"];
 async function run() {
     try {
-        // Read action inputs from the workflow YAML
+        // Read and validate action inputs
         const username = core.getInput("anilist_username", { required: true });
         const readmePath = core.getInput("readme_path") || "README.md";
-        const displayStyle = (core.getInput("display_style") || "full");
-        const maxItems = parseInt(core.getInput("max_items") || "5", 10);
+        const styleInput = core.getInput("display_style") || "full";
+        if (!VALID_STYLES.includes(styleInput)) {
+            throw new Error(`Invalid display_style "${styleInput}". Must be "compact" or "full".`);
+        }
+        const displayStyle = styleInput;
+        const maxItemsRaw = core.getInput("max_items") || "5";
+        const maxItems = parseInt(maxItemsRaw, 10);
+        if (isNaN(maxItems) || maxItems < 1) {
+            throw new Error(`Invalid max_items "${maxItemsRaw}". Must be a positive integer.`);
+        }
         // Fetch data from AniList's public GraphQL API
         core.info(`Fetching AniList data for user: ${username}`);
         const data = await (0, anilist_1.fetchAniListData)(username, maxItems);
@@ -25884,6 +25919,9 @@ async function run() {
         // Render the markdown and inject it between the markers in the README
         const markdown = (0, render_1.renderMarkdown)(data, displayStyle);
         const fullPath = path.resolve(readmePath);
+        if (!fs.existsSync(fullPath)) {
+            throw new Error(`README not found at path: ${readmePath}`);
+        }
         const readme = fs.readFileSync(fullPath, "utf-8");
         const updated = (0, inject_1.injectSection)(readme, markdown);
         // Skip writing if nothing changed (avoids empty commits)
