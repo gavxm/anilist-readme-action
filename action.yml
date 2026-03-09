@@ -1,0 +1,28 @@
+name: 'AniList README Action'
+description: 'Update your profile README with AniList activity - currently watching/reading, recent completions, and stats.'
+author: 'gavxm'
+
+inputs:
+  anilist_username:
+    description: 'Your AniList username'
+    required: true
+  readme_path:
+    description: 'Path to the README file to update'
+    required: false
+    default: 'README.md'
+  display_style:
+    description: 'Display style: "compact" or "full"'
+    required: false
+    default: 'full'
+  max_items:
+    description: 'Maximum number of items to show per section'
+    required: false
+    default: '5'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
+
+branding:
+  icon: 'tv'
+  color: 'blue'
