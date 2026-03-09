@@ -5,7 +5,8 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "ncc build src/index.ts -o dist",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "author": "gavxm <gavxm@pm.me>",
   "license": "MIT",
@@ -15,6 +16,7 @@
   "devDependencies": {
     "@types/node": "^20.11.0",
     "@vercel/ncc": "^0.38.1",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "vitest": "^4.0.18"
   }
 }
