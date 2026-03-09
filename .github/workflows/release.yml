@@ -1,0 +1,30 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+
+      # Move the major version tag (e.g. v1) to the latest release.
+      # This lets users pin to `uses: gavxm/anilist-readme-action@v1`
+      # and automatically get patch/minor updates.
+      - name: Update major version tag
+        run: |
+          MAJOR=$(echo "${{ github.event.release.tag_name }}" | grep -oE '^v[0-9]+')
+          git tag -f "$MAJOR" "${{ github.event.release.tag_name }}"
+          git push origin "$MAJOR" --force
