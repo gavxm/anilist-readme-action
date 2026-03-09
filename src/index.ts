@@ -13,15 +13,31 @@ import { injectSection } from "./inject";
 import * as fs from "fs";
 import * as path from "path";
 
+const VALID_STYLES = ["compact", "full"] as const;
+type DisplayStyle = (typeof VALID_STYLES)[number];
+
 async function run(): Promise<void> {
   try {
-    // Read action inputs from the workflow YAML
+    // Read and validate action inputs
     const username = core.getInput("anilist_username", { required: true });
+
     const readmePath = core.getInput("readme_path") || "README.md";
-    const displayStyle = (core.getInput("display_style") || "full") as
-      | "compact"
-      | "full";
-    const maxItems = parseInt(core.getInput("max_items") || "5", 10);
+
+    const styleInput = core.getInput("display_style") || "full";
+    if (!VALID_STYLES.includes(styleInput as DisplayStyle)) {
+      throw new Error(
+        `Invalid display_style "${styleInput}". Must be "compact" or "full".`,
+      );
+    }
+    const displayStyle = styleInput as DisplayStyle;
+
+    const maxItemsRaw = core.getInput("max_items") || "5";
+    const maxItems = parseInt(maxItemsRaw, 10);
+    if (isNaN(maxItems) || maxItems < 1) {
+      throw new Error(
+        `Invalid max_items "${maxItemsRaw}". Must be a positive integer.`,
+      );
+    }
 
     // Fetch data from AniList's public GraphQL API
     core.info(`Fetching AniList data for user: ${username}`);
@@ -34,6 +50,9 @@ async function run(): Promise<void> {
     const markdown = renderMarkdown(data, displayStyle);
 
     const fullPath = path.resolve(readmePath);
+    if (!fs.existsSync(fullPath)) {
+      throw new Error(`README not found at path: ${readmePath}`);
+    }
     const readme = fs.readFileSync(fullPath, "utf-8");
     const updated = injectSection(readme, markdown);
 
