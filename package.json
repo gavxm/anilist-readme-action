@@ -7,6 +7,7 @@
     "build": "ncc build src/index.ts -o dist",
     "typecheck": "tsc --noEmit"
   },
+  "author": "gavxm <gavxm@pm.me>",
   "license": "MIT",
   "dependencies": {
     "@actions/core": "^1.10.1"
